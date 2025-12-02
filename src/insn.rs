@@ -100,7 +100,7 @@ pub enum Insn {
     ResetCaptureGroup(CaptureGroupID),
 
     /// Perform a backreference match.
-    BackRef(u32),
+    BackRef { group: u32, icase: bool },
 
     /// Match the next character against the bracket contents, stored at the given index in the CompiledRegex.
     Bracket(usize),
@@ -128,6 +128,7 @@ pub enum Insn {
     /// \w or \W word boundaries.
     WordBoundary {
         invert: bool,
+        icase: bool,
     },
 
     /// Match any of the contained chars

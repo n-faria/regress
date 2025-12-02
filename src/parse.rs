@@ -313,14 +313,19 @@ fn make_alt(nodes: ir::NodeList) -> ir::Node {
 
 /// \return a CodePointSet for a given character escape (positive or negative).
 /// See ES9 21.2.2.12.
-fn codepoints_from_class(ct: CharacterClassType, positive: bool) -> CodePointSet {
+fn codepoints_from_class(ct: CharacterClassType, positive: bool, icase: bool, unicode: bool) -> CodePointSet {
     let mut cps;
     match ct {
         CharacterClassType::Digits => {
             cps = CodePointSet::from_sorted_disjoint_intervals(charclasses::DIGITS.to_vec())
         }
         CharacterClassType::Words => {
-            cps = CodePointSet::from_sorted_disjoint_intervals(charclasses::WORD_CHARS.to_vec())
+            cps = CodePointSet::from_sorted_disjoint_intervals(charclasses::WORD_CHARS.to_vec());
+            // When icase and unicode, add special Unicode characters that fold to word chars
+            if icase && unicode {
+                cps.add_one(0x017F); // ſ (long s) folds to 's'
+                cps.add_one(0x212A); // K (kelvin sign) folds to 'k'
+            }
         }
         CharacterClassType::Spaces => {
             cps = CodePointSet::from_sorted_disjoint_intervals(charclasses::WHITESPACE.to_vec());
@@ -336,10 +341,10 @@ fn codepoints_from_class(ct: CharacterClassType, positive: bool) -> CodePointSet
 }
 
 /// \return a Bracket for a given character escape (positive or negative).
-fn make_bracket_class(ct: CharacterClassType, positive: bool) -> ir::Node {
+fn make_bracket_class(ct: CharacterClassType, positive: bool, icase: bool, unicode: bool) -> ir::Node {
     ir::Node::Bracket(BracketContents {
         invert: false,
-        cps: codepoints_from_class(ct, positive),
+        cps: codepoints_from_class(ct, positive, icase, unicode),
     })
 }
 
@@ -350,7 +355,7 @@ fn add_class_atom(bc: &mut BracketContents, atom: ClassAtom) {
             class_type,
             positive,
         } => {
-            bc.cps.add_set(codepoints_from_class(class_type, positive));
+            bc.cps.add_set(codepoints_from_class(class_type, positive, false, false));
         }
         ClassAtom::Range { iv, negate } => {
             if negate {
@@ -517,12 +522,18 @@ where
                         // Term :: Assertion :: \b
                         'b' => {
                             self.consume('b');
-                            result.push(ir::Node::WordBoundary { invert: false });
+                            result.push(ir::Node::WordBoundary {
+                                invert: false,
+                                icase: self.flags.icase,
+                            });
                         }
                         // Term :: Assertion :: \B
                         'B' => {
                             self.consume('B');
-                            result.push(ir::Node::WordBoundary { invert: true });
+                            result.push(ir::Node::WordBoundary {
+                                invert: true,
+                                icase: self.flags.icase,
+                            });
                         }
                         // Term :: Atom :: \ AtomEscape :: CharacterEscape :: c AsciiLetter
                         // Term :: ExtendedAtom :: \ [lookahead = c]
@@ -1195,32 +1206,32 @@ where
                     // CharacterClassEscape :: d
                     0x64 /* d */ => {
                         self.consume('d');
-                        Ok(CharacterClassEscape(codepoints_from_class(CharacterClassType::Digits, true)))
+                        Ok(CharacterClassEscape(codepoints_from_class(CharacterClassType::Digits, true, false, false)))
                     }
                     // CharacterClassEscape :: D
                     0x44 /* D */ => {
                         self.consume('D');
-                        Ok(CharacterClassEscape(codepoints_from_class(CharacterClassType::Digits, false)))
+                        Ok(CharacterClassEscape(codepoints_from_class(CharacterClassType::Digits, false, false, false)))
                     }
                     // CharacterClassEscape :: s
                     0x73 /* s */ => {
                         self.consume('s');
-                        Ok(CharacterClassEscape(codepoints_from_class(CharacterClassType::Spaces, true)))
+                        Ok(CharacterClassEscape(codepoints_from_class(CharacterClassType::Spaces, true, false, false)))
                     }
                     // CharacterClassEscape :: S
                     0x53 /* S */ => {
                         self.consume('S');
-                        Ok(CharacterClassEscape(codepoints_from_class(CharacterClassType::Spaces, false)))
+                        Ok(CharacterClassEscape(codepoints_from_class(CharacterClassType::Spaces, false, false, false)))
                     }
                     // CharacterClassEscape :: w
                     0x77 /* w */ => {
                         self.consume('w');
-                        Ok(CharacterClassEscape(codepoints_from_class(CharacterClassType::Words, true)))
+                        Ok(CharacterClassEscape(codepoints_from_class(CharacterClassType::Words, true, false, false)))
                     }
                     // CharacterClassEscape :: W
                     0x57 /* W */ => {
                         self.consume('W');
-                        Ok(CharacterClassEscape(codepoints_from_class(CharacterClassType::Words, false)))
+                        Ok(CharacterClassEscape(codepoints_from_class(CharacterClassType::Words, false, false, false)))
                     }
                     // CharacterClassEscape :: [+UnicodeMode] p{ UnicodePropertyValueExpression }
                     0x70 /* p */ => {
@@ -1550,6 +1561,8 @@ where
                 Ok(make_bracket_class(
                     CharacterClassType::Digits,
                     c == 'd' as u32,
+                    self.flags.icase,
+                    self.flags.unicode,
                 ))
             }
 
@@ -1558,6 +1571,8 @@ where
                 Ok(make_bracket_class(
                     CharacterClassType::Spaces,
                     c == 's' as u32,
+                    self.flags.icase,
+                    self.flags.unicode,
                 ))
             }
 
@@ -1566,6 +1581,8 @@ where
                 Ok(make_bracket_class(
                     CharacterClassType::Words,
                     c == 'w' as u32,
+                    self.flags.icase,
+                    self.flags.unicode,
                 ))
             }
 
@@ -1606,7 +1623,10 @@ where
             '1'..='9' if self.flags.unicode => {
                 let group = self.try_consume_decimal_integer_literal().unwrap();
                 if group <= self.group_count_max as usize {
-                    Ok(ir::Node::BackRef(group as u32))
+                    Ok(ir::Node::BackRef {
+                        group: group as u32,
+                        icase: self.flags.icase,
+                    })
                 } else {
                     error("Invalid character escape")
                 }
@@ -1620,7 +1640,10 @@ where
                 let group = self.try_consume_decimal_integer_literal().unwrap();
 
                 if group <= self.group_count_max as usize {
-                    Ok(ir::Node::BackRef(group as u32))
+                    Ok(ir::Node::BackRef {
+                        group: group as u32,
+                        icase: self.flags.icase,
+                    })
                 } else {
                     self.input = input;
                     let c = self.consume_character_escape()?;
@@ -1638,7 +1661,10 @@ where
                 // The sequence `\k` must be the start of a backreference to a named capture group.
                 if let Some(group_name) = self.try_consume_named_capture_group_name() {
                     if let Some(index) = self.named_group_indices.get(&group_name) {
-                        Ok(ir::Node::BackRef(*index + 1))
+                        Ok(ir::Node::BackRef {
+                            group: *index + 1,
+                            icase: self.flags.icase,
+                        })
                     } else {
                         error(format!(
                             "Backreference to invalid named capture group: {}",
@@ -1823,8 +1849,18 @@ where
     }
 
     // Quickly parse all capture groups.
+    // Per TC39 proposal, duplicate named groups are allowed in different alternatives.
     fn parse_capture_groups(&mut self) -> Result<(), Error> {
         let orig_input = self.input.clone();
+
+        // Track parenthesis depth and alternative index at each depth
+        let mut paren_depth: usize = 0;
+        // Map from depth to current alternative index at that depth
+        let mut alt_indices: HashMap<usize, usize> = HashMap::new();
+        alt_indices.insert(0, 0);
+
+        // Map from group name to the set of alternative paths where it appears.
+        let mut named_groups: HashMap<String, Vec<Vec<(usize, usize)>>> = HashMap::new();
 
         loop {
             match self.next().map(to_char_sat) {
@@ -1846,18 +1882,58 @@ where
                 Some('(') => {
                     if self.try_consume_str("?")
                         && let Some(name) = self.try_consume_named_capture_group_name()
-                        && self
-                            .named_group_indices
-                            .insert(name, self.group_count_max)
-                            .is_some()
                     {
-                        return error("Duplicate capture group name");
+                        // Build current alternative path (depth, alt_index) pairs
+                        let mut current_path = Vec::new();
+                        for d in 0..=paren_depth {
+                            current_path.push((d, *alt_indices.get(&d).unwrap_or(&0)));
+                        }
+
+                        // Check if this name already exists in a conflicting alternative path.
+                        // Two paths conflict if they share the same alternative indices
+                        // at all common depth levels (i.e., one is a prefix of the other
+                        // or they're identical up to the shallower depth).
+                        if let Some(existing_paths) = named_groups.get(&name) {
+                            for existing_path in existing_paths {
+                                let min_len = current_path.len().min(existing_path.len());
+                                if current_path[..min_len] == existing_path[..min_len] {
+                                    return error("Duplicate capture group name");
+                                }
+                            }
+                        }
+
+                        // Add this path for this group name
+                        named_groups
+                            .entry(name.clone())
+                            .or_default()
+                            .push(current_path);
+
+                        // Store in named_group_indices (use the first occurrence's index)
+                        self.named_group_indices
+                            .entry(name)
+                            .or_insert(self.group_count_max);
                     }
+
                     self.group_count_max = if self.group_count_max + 1 > MAX_CAPTURE_GROUPS as u32 {
                         MAX_CAPTURE_GROUPS as u32
                     } else {
                         self.group_count_max + 1
                     };
+
+                    // Entering a new group
+                    paren_depth += 1;
+                    alt_indices.insert(paren_depth, 0);
+                }
+                Some(')') => {
+                    // Exiting a group
+                    if paren_depth > 0 {
+                        alt_indices.remove(&paren_depth);
+                        paren_depth -= 1;
+                    }
+                }
+                Some('|') => {
+                    // Moving to next alternative at current depth
+                    *alt_indices.entry(paren_depth).or_insert(0) += 1;
                 }
                 Some(_) => continue,
                 None => break,

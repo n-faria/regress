@@ -19,6 +19,28 @@ pub trait CharProperties {
             || c == '_' as u32
     }
 
+    /// \return whether this is a word char with case-folding support.
+    /// Used for case-insensitive word boundaries.
+    fn is_word_char_icase(c: Self::Element, unicode: bool) -> bool {
+        // First check if the character itself is a word character
+        if Self::is_word_char(c) {
+            return true;
+        }
+        // Check if the folded character is a word character
+        let c_u32 = c.as_u32();
+        let folded = unicode::fold_code_point(c_u32, unicode);
+        if folded != c_u32 {
+            // Check if the folded character (as u32) is a word character
+            // by checking the u32 directly against word char ranges
+            'a' as u32 <= folded && folded <= 'z' as u32
+                || 'A' as u32 <= folded && folded <= 'Z' as u32
+                || '0' as u32 <= folded && folded <= '9' as u32
+                || folded == '_' as u32
+        } else {
+            false
+        }
+    }
+
     /// ES9 11.3
     fn is_line_terminator(c: Self::Element) -> bool {
         matches!(c.as_u32(), 0x000A | 0x000D | 0x2028 | 0x2029)

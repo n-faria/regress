@@ -221,11 +221,11 @@ fn try_match_state<Input: InputIndexer, Dir: Direction>(
             nextinsn_or_fail!(true)
         }
 
-        &Insn::BackRef(group_idx) => {
+        &Insn::BackRef { group: group_idx, icase } => {
             let matched;
             let group = &mut s.groups[group_idx as usize];
             if let Some(orig_range) = group.as_range() {
-                if re.flags.icase {
+                if icase {
                     matched = matchers::backref_icase(input, dir, orig_range, &mut s.pos);
                 } else {
                     matched = matchers::backref(input, dir, orig_range, &mut s.pos)
@@ -305,13 +305,25 @@ fn try_match_state<Input: InputIndexer, Dir: Direction>(
             nextinsn_or_fail!(scm::MatchByteArraySet(bytes).matches(input, dir, &mut s.pos))
         }
 
-        &Insn::WordBoundary { invert } => {
-            let prev_wordchar = input
-                .peek_left(s.pos)
-                .is_some_and(Input::CharProps::is_word_char);
-            let curr_wordchar = input
-                .peek_right(s.pos)
-                .is_some_and(Input::CharProps::is_word_char);
+        &Insn::WordBoundary { invert, icase } => {
+            let prev_wordchar = if icase {
+                input
+                    .peek_left(s.pos)
+                    .is_some_and(|c| Input::CharProps::is_word_char_icase(c, re.flags.unicode))
+            } else {
+                input
+                    .peek_left(s.pos)
+                    .is_some_and(Input::CharProps::is_word_char)
+            };
+            let curr_wordchar = if icase {
+                input
+                    .peek_right(s.pos)
+                    .is_some_and(|c| Input::CharProps::is_word_char_icase(c, re.flags.unicode))
+            } else {
+                input
+                    .peek_right(s.pos)
+                    .is_some_and(Input::CharProps::is_word_char)
+            };
             let is_boundary = prev_wordchar != curr_wordchar;
             nextinsn_or_fail!(is_boundary != invert)
         }
