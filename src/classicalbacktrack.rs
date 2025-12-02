@@ -770,14 +770,26 @@ impl<'a, Input: InputIndexer> MatchAttempter<'a, Input> {
                         )
                     }
 
-                    &Insn::WordBoundary { invert } => {
+                    &Insn::WordBoundary { invert, icase } => {
                         // Copy the positions since these destructively move them.
-                        let prev_wordchar = input
-                            .peek_left(pos)
-                            .is_some_and(Input::CharProps::is_word_char);
-                        let curr_wordchar = input
-                            .peek_right(pos)
-                            .is_some_and(Input::CharProps::is_word_char);
+                        let prev_wordchar = if icase {
+                            input
+                                .peek_left(pos)
+                                .is_some_and(|c| Input::CharProps::is_word_char_icase(c, re.flags.unicode))
+                        } else {
+                            input
+                                .peek_left(pos)
+                                .is_some_and(Input::CharProps::is_word_char)
+                        };
+                        let curr_wordchar = if icase {
+                            input
+                                .peek_right(pos)
+                                .is_some_and(|c| Input::CharProps::is_word_char_icase(c, re.flags.unicode))
+                        } else {
+                            input
+                                .peek_right(pos)
+                                .is_some_and(Input::CharProps::is_word_char)
+                        };
                         let is_boundary = prev_wordchar != curr_wordchar;
                         next_or_bt!(is_boundary != invert)
                     }
@@ -856,14 +868,14 @@ impl<'a, Input: InputIndexer> MatchAttempter<'a, Input> {
                         next_or_bt!(true)
                     }
 
-                    &Insn::BackRef(cg_idx) => {
+                    &Insn::BackRef { group: cg_idx, icase } => {
                         let cg = self.s.groups.mat(cg_idx as usize);
                         // Backreferences to a capture group that did not match always succeed (ES5
                         // 15.10.2.9).
                         // Note we may be in the capture group we are examining, e.g. /(abc\1)/.
                         let matched;
                         if let Some(orig_range) = cg.as_range() {
-                            if re.flags.icase {
+                            if icase {
                                 matched = matchers::backref_icase(input, dir, orig_range, &mut pos);
                             } else {
                                 matched = matchers::backref(input, dir, orig_range, &mut pos);
